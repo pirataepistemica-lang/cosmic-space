@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Cosmic body baseline */
+body {
+  @apply bg-space-dark text-slate-100 antialiased;
+}
+
+/* Smooth scroll for softer navigation */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Hides the default outline but reintroduces an accessible focus ring */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: none;
+  @apply ring-2 ring-indigo-400 ring-offset-2 ring-offset-space-dark;
+}
