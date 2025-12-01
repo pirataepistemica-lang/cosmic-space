@@ -1,511 +1,220 @@
-// src/components/html-views/LuaView.tsx
+// SVG-based LuaView converted from the original canvas implementation
 "use client";
 
 import { useEffect, useRef } from "react";
 
+type MoonPhase = "new" | "full";
+
+type Moon = {
+  id: number;
+  type: "moon";
+  phase: MoonPhase;
+  x: number;
+  y: number;
+  radius: number;
+  color: string;
+  floatPhase: number;
+};
+
 export function LuaView() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const starsRef = useRef<SVGCircleElement[]>([]);
+  const moonsRef = useRef<SVGCircleElement[]>([]);
+  const trailRef = useRef<SVGPathElement | null>(null);
+  const focusedLayerRef = useRef<SVGGElement | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const svg = svgRef.current;
+    if (!svg) return;
 
-    const canvasEl = canvasRef.current!;
-    const ctx = canvasEl.getContext("2d")!;
+    const WIDTH = 1000; // logical SVG width
+    const HEIGHT = 1000;
 
-    // ==========================
-    // Setup básico do canvas
-    // ==========================
-    function resizeCanvas() {
-      const c = canvasRef.current;
-      if (!c) return;
-      c.width = window.innerWidth;
-      c.height = window.innerHeight;
+    // Helpers (normalized 0..1)
+    function toPxX(nx: number) {
+      return nx * WIDTH;
     }
 
-    resizeCanvas();
-    window.addEventListener("resize", resizeCanvas);
-
-    // ==========================
-    // Coordenadas normalizadas
-    // ==========================
-    function normToPixelX(nx: number) {
-      return nx * canvasEl.width;
+    function toPxY(ny: number) {
+      return ny * HEIGHT;
     }
 
-    function normToPixelY(ny: number) {
-      return ny * canvasEl.height;
+    function normRadius(nr: number) {
+      return nr * Math.min(WIDTH, HEIGHT);
     }
 
-    function normRadiusToPixels(nr: number) {
-      return nr * Math.min(canvasEl.width, canvasEl.height);
-    }
-
-    // ==========================
-    // Sistema de câmera (pan + zoom)
-    // ==========================
+    // Camera
     const camera = {
-      current: { x: 0.5, y: 0.5, scale: 1.0 },
-      target: { x: 0.5, y: 0.5, scale: 1.0 },
-      lerpFactor: 0.08,
-    };
+      current: { x: 0.5, y: 0.5, scale: 1 },
+      target: { x: 0.5, y: 0.5, scale: 1 },
+      lerp: 0.08,
+    } as any;
 
     function updateCamera() {
       const c = camera.current;
       const t = camera.target;
-      c.x += (t.x - c.x) * camera.lerpFactor;
-      c.y += (t.y - c.y) * camera.lerpFactor;
-      c.scale += (t.scale - c.scale) * camera.lerpFactor;
+      c.x += (t.x - c.x) * camera.lerp;
+      c.y += (t.y - c.y) * camera.lerp;
+      c.scale += (t.scale - c.scale) * camera.lerp;
     }
 
-    function applyCameraTransform() {
-      const c = camera.current;
-      const cxPix = normToPixelX(c.x);
-      const cyPix = normToPixelY(c.y);
-
-      ctx.translate(canvasEl.width / 2, canvasEl.height / 2);
-      ctx.scale(c.scale, c.scale);
-      ctx.translate(-cxPix, -cyPix);
-    }
-
-    function screenToWorldNormalized(sx: number, sy: number) {
-      const c = camera.current;
-      const cxPix = normToPixelX(c.x);
-      const cyPix = normToPixelY(c.y);
-
-      const worldPixX = (sx - canvasEl.width / 2) / c.scale + cxPix;
-      const worldPixY = (sy - canvasEl.height / 2) / c.scale + cyPix;
-
-      const nx = worldPixX / canvasEl.width;
-      const ny = worldPixY / canvasEl.height;
-      return { x: nx, y: ny };
-    }
-
-    // ==========================
-    // Estrelas de fundo
-    // ==========================
-    type Star = {
-      x: number;
-      y: number;
-      radius: number;
-      baseAlpha: number;
-      twinkleSpeed: number;
-      twinklePhase: number;
-    };
-
+    // Stars
+    type Star = { x: number; y: number; r: number; baseA: number; speed: number; phase: number };
     const stars: Star[] = [];
-    const STAR_COUNT = 250;
-
-    function createStars() {
-      stars.length = 0;
-      for (let i = 0; i < STAR_COUNT; i++) {
-        stars.push({
-          x: Math.random(),
-          y: Math.random(),
-          radius: Math.random() * 0.002 + 0.0005,
-          baseAlpha: Math.random() * 0.6 + 0.2,
-          twinkleSpeed: Math.random() * 2 + 0.5,
-          twinklePhase: Math.random() * Math.PI * 2,
-        });
-      }
+    const STAR_COUNT = 200;
+    for (let i = 0; i < STAR_COUNT; i++) {
+      stars.push({ x: Math.random(), y: Math.random(), r: Math.random() * 1.5 + 0.2, baseA: Math.random() * 0.6 + 0.2, speed: Math.random() * 2 + 0.5, phase: Math.random() * Math.PI * 2 });
     }
-    createStars();
 
-    // ==========================
-    // Trilha luminosa senoidal
-    // ==========================
-    const trail = {
-      amplitude: 0.08,
-      frequency: 3.5,
-      phaseSpeed: 0.0004,
-    };
+    // Nebulas
+    const nebulas = [
+      { x: 0.15, y: 0.25, r: 0.18, c1: "#82b4ff66", c2: "#14285000" },
+      { x: 0.65, y: 0.15, r: 0.22, c1: "#ff96c866", c2: "#3c142800" },
+      { x: 0.85, y: 0.65, r: 0.2, c1: "#aaffc866", c2: "#143c2800" },
+    ];
 
+    // Trail
+    const trail = { amplitude: 0.08, frequency: 3.5, phaseSpeed: 0.0004 };
     function getTrailPoint(t: number, time: number) {
       const baseX = t;
       const baseY = 1 - t;
       const phase = time * trail.phaseSpeed;
-      const offset =
-        trail.amplitude * Math.sin(trail.frequency * t * Math.PI * 2 + phase);
+      const offset = trail.amplitude * Math.sin(trail.frequency * t * Math.PI * 2 + phase);
       return { x: baseX, y: baseY + offset };
     }
 
-    // ==========================
-    // Nebulosas / galáxias suaves
-    // ==========================
-    const nebulas = [
-      {
-        x: 0.15,
-        y: 0.25,
-        radius: 0.18,
-        color1: "rgba(130, 180, 255, 0.7)",
-        color2: "rgba(20, 40, 80, 0)",
-      },
-      {
-        x: 0.65,
-        y: 0.15,
-        radius: 0.22,
-        color1: "rgba(255, 150, 200, 0.6)",
-        color2: "rgba(60, 20, 40, 0)",
-      },
-      {
-        x: 0.85,
-        y: 0.65,
-        radius: 0.2,
-        color1: "rgba(170, 255, 200, 0.5)",
-        color2: "rgba(20, 60, 40, 0)",
-      },
-    ];
-
-    // ==========================
-    // Luas
-    // ==========================
-    type MoonPhase = "new" | "full";
-
-    type Moon = {
-      id: number;
-      type: "moon";
-      phase: MoonPhase;
-      x: number;
-      y: number;
-      radius: number;
-      color: string;
-      floatPhase: number;
-    };
-
+    // Moons
     const moons: Moon[] = [
-      // Acima da trilha: luas novas
-      {
-        id: 1,
-        type: "moon",
-        phase: "new",
-        x: 0.18,
-        y: 0.65,
-        radius: 0.022,
-        color: "#333744",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-      {
-        id: 2,
-        type: "moon",
-        phase: "new",
-        x: 0.32,
-        y: 0.52,
-        radius: 0.02,
-        color: "#2c3140",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-      {
-        id: 3,
-        type: "moon",
-        phase: "new",
-        x: 0.55,
-        y: 0.32,
-        radius: 0.024,
-        color: "#3b3f4f",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-      {
-        id: 4,
-        type: "moon",
-        phase: "new",
-        x: 0.78,
-        y: 0.12,
-        radius: 0.02,
-        color: "#262a35",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-
-      // Abaixo da trilha: luas cheias
-      {
-        id: 5,
-        type: "moon",
-        phase: "full",
-        x: 0.22,
-        y: 0.86,
-        radius: 0.025,
-        color: "#f5e3a0",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-      {
-        id: 6,
-        type: "moon",
-        phase: "full",
-        x: 0.4,
-        y: 0.7,
-        radius: 0.02,
-        color: "#ffd7a3",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-      {
-        id: 7,
-        type: "moon",
-        phase: "full",
-        x: 0.62,
-        y: 0.55,
-        radius: 0.023,
-        color: "#ffecc4",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
-      {
-        id: 8,
-        type: "moon",
-        phase: "full",
-        x: 0.82,
-        y: 0.42,
-        radius: 0.021,
-        color: "#d7f0ff",
-        floatPhase: Math.random() * Math.PI * 2,
-      },
+      { id: 1, type: "moon", phase: "new", x: 0.18, y: 0.65, radius: 0.022, color: "#333744", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 2, type: "moon", phase: "new", x: 0.32, y: 0.52, radius: 0.02, color: "#2c3140", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 3, type: "moon", phase: "new", x: 0.55, y: 0.32, radius: 0.024, color: "#3b3f4f", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 4, type: "moon", phase: "new", x: 0.78, y: 0.12, radius: 0.02, color: "#262a35", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 5, type: "moon", phase: "full", x: 0.22, y: 0.86, radius: 0.025, color: "#f5e3a0", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 6, type: "moon", phase: "full", x: 0.4, y: 0.7, radius: 0.02, color: "#ffd7a3", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 7, type: "moon", phase: "full", x: 0.62, y: 0.55, radius: 0.023, color: "#ffecc4", floatPhase: Math.random() * Math.PI * 2 },
+      { id: 8, type: "moon", phase: "full", x: 0.82, y: 0.42, radius: 0.021, color: "#d7f0ff", floatPhase: Math.random() * Math.PI * 2 },
     ];
 
     let focusedMoonId: number | null = null;
-    let animationFrameId: number;
 
-    // ==========================
-    // Funções de desenho
-    // ==========================
-    function drawBackground() {
-      ctx.fillStyle = "#02030a";
-      ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
-    }
+    // Create SVG elements references arrays if not set
+    starsRef.current = starsRef.current.slice(0, STAR_COUNT);
+    moonsRef.current = moonsRef.current.slice(0, moons.length);
 
-    function drawStars(time: number) {
-      for (const s of stars) {
-        const x = normToPixelX(s.x);
-        const y = normToPixelY(s.y);
-        const r = normRadiusToPixels(s.radius);
+    // Animation loop
+    let raf = 0;
+    const start = performance.now();
 
-        const twinkle =
-          Math.sin(time * s.twinkleSpeed + s.twinklePhase) * 0.3 + 0.7;
-        const alpha = s.baseAlpha * twinkle;
+    function render(now: number) {
+      const time = now;
+      updateCamera();
 
-        ctx.beginPath();
-        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
+      // Update stars twinkle
+      for (let i = 0; i < stars.length; i++) {
+        const s = stars[i];
+        const el = starsRef.current[i];
+        if (!el) continue;
+        const tw = Math.sin(time * s.speed + s.phase) * 0.3 + 0.7;
+        el.setAttribute("opacity", String(s.baseA * tw));
       }
-    }
 
-    function drawNebulas() {
-      for (const n of nebulas) {
-        const x = normToPixelX(n.x);
-        const y = normToPixelY(n.y);
-        const r = normRadiusToPixels(n.radius);
-
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-        grad.addColorStop(0, n.color1);
-        grad.addColorStop(1, n.color2);
-        ctx.beginPath();
-        ctx.fillStyle = grad;
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    function drawLuminousTrail(time: number) {
+      // Update trail path
       const segments = 220;
-
-      // Brilho principal
-      ctx.save();
-
-      const flicker = 0.5 + 0.2 * Math.sin(time * 0.003);
-      const lineWidth = Math.max(4, 10 * flicker);
-
-      ctx.shadowBlur = 40;
-      ctx.shadowColor = "rgba(180, 230, 255, 0.9)";
-
-      const grad = ctx.createLinearGradient(0, canvasEl.height, canvasEl.width, 0);
-      grad.addColorStop(0.0, "rgba(100, 160, 255, 0)");
-      grad.addColorStop(0.2, "rgba(160, 210, 255, 0.8)");
-      grad.addColorStop(0.5, "rgba(255, 255, 255, 1)");
-      grad.addColorStop(0.8, "rgba(160, 220, 255, 0.8)");
-      grad.addColorStop(1.0, "rgba(100, 160, 255, 0)");
-      ctx.strokeStyle = grad;
-      ctx.lineWidth = lineWidth;
-
-      ctx.beginPath();
+      const pts: string[] = [];
       for (let i = 0; i <= segments; i++) {
         const t = i / segments;
         const p = getTrailPoint(t, time);
-        const x = normToPixelX(p.x);
-        const y = normToPixelY(p.y);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        pts.push(`${toPxX(p.x)},${toPxY(p.y)}`);
       }
-      ctx.stroke();
-      ctx.restore();
-
-      // Halo suave
-      ctx.save();
-      ctx.lineWidth = lineWidth * 2.2;
-      ctx.strokeStyle = "rgba(160, 220, 255, 0.12)";
-      ctx.beginPath();
-      for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const p = getTrailPoint(t, time);
-        const x = normToPixelX(p.x);
-        const y = normToPixelY(p.y);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    function drawMoon(m: Moon, time: number) {
-      const floatOffset =
-        Math.sin(time * 0.0007 + m.floatPhase) * 0.008;
-      const x = normToPixelX(m.x);
-      const y = normToPixelY(m.y + floatOffset);
-      const r = normRadiusToPixels(m.radius);
-
-      ctx.save();
-
-      const haloStrength = m.phase === "full" ? 0.75 : 0.35;
-      const haloGrad = ctx.createRadialGradient(x, y, 0, x, y, r * 2);
-      haloGrad.addColorStop(0, `rgba(255, 255, 230, ${haloStrength})`);
-      haloGrad.addColorStop(1, "rgba(255, 255, 230, 0)");
-      ctx.fillStyle = haloGrad;
-      ctx.beginPath();
-      ctx.arc(x, y, r * 2, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (m.phase === "new") {
-        const grad = ctx.createRadialGradient(
-          x - r * 0.3,
-          y - r * 0.3,
-          r * 0.1,
-          x,
-          y,
-          r
-        );
-        grad.addColorStop(0, "#111319");
-        grad.addColorStop(1, m.color || "#05070c");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = "rgba(220, 230, 255, 0.4)";
-        ctx.lineWidth = r * 0.18;
-        ctx.beginPath();
-        ctx.arc(x, y, r * 0.94, 0, Math.PI * 2);
-        ctx.stroke();
-      } else {
-        const grad = ctx.createRadialGradient(
-          x - r * 0.3,
-          y - r * 0.3,
-          r * 0.1,
-          x,
-          y,
-          r
-        );
-        grad.addColorStop(0, "#ffffff");
-        grad.addColorStop(1, m.color || "#f5e3a0");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
+      if (trailRef.current) {
+        trailRef.current.setAttribute("d", `M ${pts.join(" L ")}`);
       }
 
-      ctx.restore();
-    }
-
-    function drawMoons(time: number) {
-      for (const m of moons) {
-        drawMoon(m, time);
-      }
-    }
-
-    function drawFocusedMoonOverlay(moon: Moon, time: number) {
-      const c = camera.current;
-      const cxPix = normToPixelX(c.x);
-      const cyPix = normToPixelY(c.y);
-      const floatOffset =
-        Math.sin(time * 0.0007 + moon.floatPhase) * 0.008;
-
-      const worldPixX = normToPixelX(moon.x);
-      const worldPixY = normToPixelY(moon.y + floatOffset);
-      const scale = c.scale;
-
-      const sx = (worldPixX - cxPix) * scale + canvasEl.width / 2;
-      const sy = (worldPixY - cyPix) * scale + canvasEl.height / 2;
-      const r = normRadiusToPixels(moon.radius) * scale;
-
-      ctx.save();
-
-      const haloStrength = moon.phase === "full" ? 0.95 : 0.65;
-      const haloGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 3);
-      haloGrad.addColorStop(0, `rgba(255, 255, 230, ${haloStrength})`);
-      haloGrad.addColorStop(1, "rgba(255, 255, 230, 0)");
-      ctx.fillStyle = haloGrad;
-      ctx.beginPath();
-      ctx.arc(sx, sy, r * 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      if (moon.phase === "new") {
-        const grad = ctx.createRadialGradient(
-          sx - r * 0.3,
-          sy - r * 0.3,
-          r * 0.1,
-          sx,
-          sy,
-          r
-        );
-        grad.addColorStop(0, "#111319");
-        grad.addColorStop(1, moon.color || "#05070c");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(sx, sy, r, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = "rgba(220, 230, 255, 0.5)";
-        ctx.lineWidth = r * 0.18;
-        ctx.beginPath();
-        ctx.arc(sx, sy, r * 0.94, 0, Math.PI * 2);
-        ctx.stroke();
-      } else {
-        const grad = ctx.createRadialGradient(
-          sx - r * 0.3,
-          sy - r * 0.3,
-          r * 0.1,
-          sx,
-          sy,
-          r
-        );
-        grad.addColorStop(0, "#ffffff");
-        grad.addColorStop(1, moon.color || "#f5e3a0");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(sx, sy, r, 0, Math.PI * 2);
-        ctx.fill();
+      // Update moons positions
+      for (let i = 0; i < moons.length; i++) {
+        const m = moons[i];
+        const floatOffset = Math.sin(time * 0.0007 + m.floatPhase) * 0.008;
+        const px = toPxX(m.x);
+        const py = toPxY(m.y + floatOffset);
+        const r = normRadius(m.radius);
+        const el = moonsRef.current[i];
+        if (!el) continue;
+        el.setAttribute("cx", String(px));
+        el.setAttribute("cy", String(py));
+        el.setAttribute("r", String(r));
       }
 
-      ctx.restore();
-    }
+      // Camera transform on main world group
+      const world = svg.querySelector('#world') as SVGGElement | null;
+      if (world) {
+        const c = camera.current;
+        const cx = toPxX(c.x);
+        const cy = toPxY(c.y);
+        const s = c.scale;
+        // center, scale, then translate to camera center
+        const tx = WIDTH / 2;
+        const ty = HEIGHT / 2;
+        world.setAttribute('transform', `translate(${tx} ${ty}) scale(${s}) translate(${-cx} ${-cy})`);
+      }
 
-    // ==========================
-    // Interação
-    // ==========================
-    function findClickedMoon(screenX: number, screenY: number) {
-      const world = screenToWorldNormalized(screenX, screenY);
+      // Focused overlay
+      if (focusedMoonId !== null && focusedLayerRef.current) {
+        const moon = moons.find(m => m.id === focusedMoonId)!;
+        const floatOffset = Math.sin(time * 0.0007 + moon.floatPhase) * 0.008;
+        const worldPxX = toPxX(moon.x);
+        const worldPxY = toPxY(moon.y + floatOffset);
+        const c = camera.current;
+        const sx = (worldPxX - toPxX(c.x)) * c.scale + WIDTH / 2;
+        const sy = (worldPxY - toPxY(c.y)) * c.scale + HEIGHT / 2;
+        const r = normRadius(moon.radius) * c.scale;
 
-      for (const m of moons) {
-        const dx = world.x - m.x;
-        const dy = world.y - m.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist <= m.radius * 1.4) {
-          return m;
+        const g = focusedLayerRef.current;
+        // set circle in focused layer
+        const focusedCircle = g.querySelector('circle.focused') as SVGCircleElement | null;
+        if (focusedCircle) {
+          focusedCircle.setAttribute('cx', String(sx));
+          focusedCircle.setAttribute('cy', String(sy));
+          focusedCircle.setAttribute('r', String(r));
         }
+        const halo = g.querySelector('circle.halo') as SVGCircleElement | null;
+        if (halo) halo.setAttribute('r', String(r * 3));
+      }
+
+      raf = requestAnimationFrame(render);
+    }
+
+    raf = requestAnimationFrame(render);
+
+    // Interaction helpers
+    function svgPointFromEvent(e: MouseEvent) {
+      const rect = svg.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      // convert to svg coordinates inside WIDTH x HEIGHT
+      const px = (sx / rect.width) * WIDTH;
+      const py = (sy / rect.height) * HEIGHT;
+      // convert to normalized world coordinates considering camera
+      const c = camera.current;
+      const worldX = (px - WIDTH / 2) / c.scale + toPxX(c.x);
+      const worldY = (py - HEIGHT / 2) / c.scale + toPxY(c.y);
+      return { px: worldX, py: worldY, nx: worldX / WIDTH, ny: worldY / HEIGHT };
+    }
+
+    function findClickedMoon(e: MouseEvent) {
+      const p = svgPointFromEvent(e);
+      for (const m of moons) {
+        const dx = p.nx - m.x;
+        const dy = p.ny - m.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist <= m.radius * 1.4) return m;
       }
       return null;
     }
 
-    function focusOnMoon(moon: Moon) {
-      focusedMoonId = moon.id;
-      camera.target.x = moon.x;
-      camera.target.y = moon.y;
+    function focusOnMoon(m: Moon) {
+      focusedMoonId = m.id;
+      camera.target.x = m.x;
+      camera.target.y = m.y;
       camera.target.scale = 2.5;
     }
 
@@ -513,92 +222,87 @@ export function LuaView() {
       focusedMoonId = null;
       camera.target.x = 0.5;
       camera.target.y = 0.5;
-      camera.target.scale = 1.0;
+      camera.target.scale = 1;
     }
 
-    const handleClick = (e: MouseEvent) => {
-      const rect = canvasEl.getBoundingClientRect();
-      const sx = e.clientX - rect.left;
-      const sy = e.clientY - rect.top;
-      const clicked = findClickedMoon(sx, sy);
+    const handleClick = (ev: MouseEvent) => {
+      const clicked = findClickedMoon(ev);
       if (clicked) {
-        if (focusedMoonId === clicked.id) {
-          resetCamera();
-        } else {
-          focusOnMoon(clicked);
-        }
+        if (focusedMoonId === clicked.id) resetCamera();
+        else focusOnMoon(clicked);
       }
     };
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" || e.key === "Esc") {
-        resetCamera();
-      }
-    };
+    const handleKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') resetCamera(); };
 
-    canvasEl.addEventListener("click", handleClick);
-    window.addEventListener("keydown", handleKeyDown);
+    svg.addEventListener('click', handleClick);
+    window.addEventListener('keydown', handleKey);
 
-    // ==========================
-    // Loop de animação
-    // ==========================
-    const render = (timestamp: number) => {
-      const time = timestamp;
-
-      updateCamera();
-
-      ctx.save();
-      drawBackground();
-      ctx.restore();
-
-      ctx.save();
-      drawStars(time * 0.002);
-      drawNebulas();
-      ctx.restore();
-
-      ctx.save();
-      applyCameraTransform();
-      drawLuminousTrail(time);
-      drawMoons(time);
-      ctx.restore();
-
-      if (focusedMoonId !== null) {
-        ctx.save();
-          ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
-          ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
-
-        const moon = moons.find((m) => m.id === focusedMoonId);
-        if (moon) {
-          drawFocusedMoonOverlay(moon, time);
-        }
-
-        ctx.restore();
-      }
-
-      animationFrameId = requestAnimationFrame(render);
-    };
-
-    animationFrameId = requestAnimationFrame(render);
-
-    // Cleanup
     return () => {
-      cancelAnimationFrame(animationFrameId);
-      window.removeEventListener("resize", resizeCanvas);
-      window.removeEventListener("keydown", handleKeyDown);
-      const cr = canvasRef.current;
-      if (cr) cr.removeEventListener("click", handleClick);
+      cancelAnimationFrame(raf);
+      svg.removeEventListener('click', handleClick);
+      window.removeEventListener('keydown', handleKey);
     };
   }, []);
 
+  // Render static SVG structure; dynamic parts updated via refs
   return (
     <div className="relative w-full h-screen overflow-hidden bg-black">
-      <canvas
-        ref={canvasRef}
-        className="fixed inset-0 w-screen h-screen block"
-      />
+      <svg ref={svgRef} viewBox="0 0 1000 1000" className="fixed inset-0 w-screen h-screen block">
+        <defs>
+          <linearGradient id="trailGrad" x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stopColor="rgba(100,160,255,0)" />
+            <stop offset="20%" stopColor="rgba(160,210,255,0.8)" />
+            <stop offset="50%" stopColor="#ffffff" />
+            <stop offset="80%" stopColor="rgba(160,220,255,0.8)" />
+            <stop offset="100%" stopColor="rgba(100,160,255,0)" />
+          </linearGradient>
+          <filter id="blurHalo" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="16" />
+          </filter>
+        </defs>
+
+        {/* background */}
+        <rect x="0" y="0" width="1000" height="1000" fill="#02030a" />
+
+        {/* stars */}
+        {Array.from({ length: 200 }).map((_, i) => (
+          <circle key={i} ref={(el) => { if (el) (starsRef.current[i] = el); }} cx={0} cy={0} r={1} fill="#fff" opacity={0.6} />
+        ))}
+
+        {/* nebulas (visual only) */}
+        <g id="nebulas" opacity={0.9} pointerEvents="none">
+          <circle cx={toNumber(0.15)} cy={toNumber(0.25)} r={toNumber(0.18)} fill="#82b4ff66" />
+          <circle cx={toNumber(0.65)} cy={toNumber(0.15)} r={toNumber(0.22)} fill="#ff96c866" />
+          <circle cx={toNumber(0.85)} cy={toNumber(0.65)} r={toNumber(0.2)} fill="#aaffc866" />
+        </g>
+
+        {/* world group that will be transformed by camera */}
+        <g id="world">
+          {/* luminous trail */}
+          <path ref={trailRef as any} d="" stroke="url(#trailGrad)" strokeWidth={8} fill="none" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'blur(6px)' }} />
+
+          {/* moons */}
+          {Array.from({ length: 8 }).map((_, i) => (
+            <circle key={i} ref={(el) => { if (el) (moonsRef.current[i] = el); }} cx={0} cy={0} r={2} fill="#fff" stroke="rgba(220,230,255,0.2)" strokeWidth={0.5} />
+          ))}
+        </g>
+
+        {/* focused overlay layer (drawn in screen coordinates) */}
+        <g ref={focusedLayerRef as any} pointerEvents="none">
+          <rect x={0} y={0} width={1000} height={1000} fill="black" opacity={0} />
+          <circle className="halo" cx={500} cy={500} r={0} fill="rgba(255,255,230,0.6)" />
+          <circle className="focused" cx={500} cy={500} r={0} fill="#fff" />
+        </g>
+      </svg>
+
       <div className="fixed left-4 bottom-4 text-xs text-slate-300 bg-black/60 px-3 py-1.5 rounded-md backdrop-blur-sm pointer-events-none">
         Clique em uma lua para focar • Clique de novo ou aperte Esc para voltar
       </div>
     </div>
   );
 }
+
+// small helper to allow JSX numbers from normalized coords inside render
+function toNumber(n: number) { return Math.round(n * 1000); }
+
