@@ -1,25 +1,9 @@
 // src/components/html-views/LuaView.tsx
 "use client";
+"use client";
 
-import { useEffect, useRef } from "react";
+export { LuaView } from "@/components/html-views/LuaView";
 
-export function LuaView() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const canvasEl = canvasRef.current!;
-    const ctx = canvasEl.getContext("2d")!;
-
-    // ==========================
-    // Setup básico do canvas
-    // ==========================
-    function resizeCanvas() {
-      const c = canvasRef.current;
-      if (!c) return;
-      c.width = window.innerWidth;
       c.height = window.innerHeight;
     }
 
